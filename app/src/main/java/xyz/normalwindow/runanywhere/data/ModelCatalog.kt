@@ -1,0 +1,1018 @@
+package xyz.normalwindow.runanywhere.data
+
+import ai.runanywhere.proto.v1.ArchiveStructure
+import ai.runanywhere.proto.v1.ArchiveType
+import ai.runanywhere.proto.v1.InferenceFramework
+import ai.runanywhere.proto.v1.LoraAdapterCatalogEntry
+import ai.runanywhere.proto.v1.ModelCategory
+import com.runanywhere.sdk.public.extensions.CUA.CUA.FARA_PROFILE
+
+
+// Curated catalog, kept in lockstep with the iOS / Flutter / RN / web / electron
+// example apps.
+//
+// Organized FAMILY-WISE, matching `ModelCatalogBootstrap.swift`: each list is
+// split into framework x modality sections, and within a section every row of a
+// model family is adjacent and ordered small->large by parameter count. Family
+// order inside a section is SmolLM/SmolVLM -> Qwen (2.5, 3, 3.5) -> LFM (Liquid
+// AI) -> Llama -> Mistral -> Phi -> Gemma -> Nemotron (NVIDIA) -> Bonsai
+// (PrismML) -> Fara -> everything else alphabetically.
+//
+// ONE quantization per model for the llama.cpp rows: when two rows were the same
+// model at different quants the LOWEST was kept.
+internal object ModelCatalog {
+
+    private val LLAMA = InferenceFramework.INFERENCE_FRAMEWORK_LLAMA_CPP
+    private val SHERPA = InferenceFramework.INFERENCE_FRAMEWORK_SHERPA
+    private val ONNX = InferenceFramework.INFERENCE_FRAMEWORK_ONNX
+    private val QHEXRT = InferenceFramework.INFERENCE_FRAMEWORK_QHEXRT
+
+    private val LANGUAGE = ModelCategory.MODEL_CATEGORY_LANGUAGE
+    private val MULTIMODAL = ModelCategory.MODEL_CATEGORY_MULTIMODAL
+    private val VISION = ModelCategory.MODEL_CATEGORY_VISION
+    private val IMAGE_GENERATION = ModelCategory.MODEL_CATEGORY_IMAGE_GENERATION
+    private val EMBEDDING = ModelCategory.MODEL_CATEGORY_EMBEDDING
+    private val STT = ModelCategory.MODEL_CATEGORY_SPEECH_RECOGNITION
+    private val TTS = ModelCategory.MODEL_CATEGORY_SPEECH_SYNTHESIS
+    private val TAR_GZ = ArchiveType.ARCHIVE_TYPE_TAR_GZ
+
+    val models: List<CatalogModel> by lazy {
+        buildList {
+            addAll(llm)
+            addAll(vlm)
+            addAll(speech)
+            addAll(misc)
+        }
+    }
+
+    /**
+     * Logical HNPU catalog. These app-owned URLs, display fields, and validated
+     * definitions are passed to QHexRT; native code owns the per-model
+     * architecture and HF-auth policy, selects the device folder, and decides
+     * which rows register.
+     *
+     * Grouped by modality, then by model family (small->large) inside each
+     * modality — same convention as the llama.cpp lists below.
+     */
+    val npuCatalog: List<SingleFileModel> = listOf(
+        // --- QHexRT / HNPU: LLM ------------------------------------------------
+        // Qwen
+        SingleFileModel("qwen3_0_6b", "Qwen3 0.6B (HNPU)", "https://huggingface.co/runanywhere/qwen3_0_6b_HNPU/qwen3-0.6b-1024final.json", QHEXRT, LANGUAGE, 1_823_248_798L, contextLength = 1_024),
+        SingleFileModel("qwen3_5_0_8b", "Qwen3.5 0.8B (HNPU)", "https://huggingface.co/runanywhere/qwen3_5_0_8b_HNPU/qwen3.5-0.8b-1024.json", QHEXRT, LANGUAGE, 2_046_527_510L, contextLength = 1_024, supportsThinking = true),
+        SingleFileModel("qwen3_5_2b", "Qwen3.5 2B (HNPU)", "https://huggingface.co/runanywhere/qwen3_5_2b_HNPU/qwen3.5-2b-1024.json", QHEXRT, LANGUAGE, 4_817_344_861L, contextLength = 1_024),
+        SingleFileModel("qwen3_5_4b", "Qwen3.5 4B (HNPU)", "https://huggingface.co/runanywhere/qwen3_5_4b_HNPU/qwen3.5-4b-1024.json", QHEXRT, LANGUAGE, 6_177_585_629L, contextLength = 1_024),
+        // Text path of the Qwen3-VL bundle; its vision sibling `qwen3_vl` is in the VLM group below.
+        SingleFileModel("qwen3_vl_2b_text", "Qwen3-VL 2B Text (HNPU)", "https://huggingface.co/runanywhere/qwen3_vl_HNPU/qwen3vl-2b-text-512.json", QHEXRT, LANGUAGE, 2_364_667_194L, contextLength = 512),
+        // LFM2.5 (Liquid AI)
+        SingleFileModel("lfm2_5_230m", "LFM2.5 230M (HNPU)", "https://huggingface.co/runanywhere/lfm2_5_230m_HNPU/lfm2-5-230m.json", QHEXRT, LANGUAGE, 538_771_163L, contextLength = 512),
+        SingleFileModel("lfm2_5_350m", "LFM2.5 350M (HNPU)", "https://huggingface.co/runanywhere/lfm2_5_350m_HNPU/lfm2-5-350m-2048.json", QHEXRT, LANGUAGE, 1_441_493_515L, contextLength = 2_048),
+        // contextLength MUST be 512: the bundle's manifest caps max_ctx there.
+        // supportsThinking: the model emits <think> itself and answers only after
+        // closing it, so nothing is shown for the first seconds of a request.
+        // The bundle ships decode + lmhead only (no prefill graph), so the prompt
+        // runs through decode and TTFT grows with prompt length; decode is flat.
+        SingleFileModel("lfm2_5_1_2b_thinking", "LFM2.5 1.2B Thinking (HNPU)", "https://huggingface.co/runanywhere/lfm2_5_1_2b_thinking_HNPU/lfm2-5-1.2b-thinking.json", QHEXRT, LANGUAGE, 1_454_013_999L, contextLength = 512, supportsThinking = true),
+        // contextLength MUST be 512: LFM2.5-2.6B has 32 query heads, and GQA-native attention is
+        // HTP-correct only at <=16, so the bundle ships materialized MHA capped at 512.
+        // supportsThinking: its chat template opens <think> unconditionally (no enable_thinking flag),
+        // so the manifest carries a no_think_prefill the runtime swaps in when thinking is turned off.
+        SingleFileModel("lfm2_5_2_6b", "LFM2.5 2.6B (HNPU)", "https://huggingface.co/runanywhere/lfm2_5_2_6b_HNPU/lfm2-5-2.6b.json", QHEXRT, LANGUAGE, 3_259_942_826L, contextLength = 512, supportsThinking = true),
+        // Llama
+        // contextLength MUST match the bundle's manifest max_ctx (512 here — Llama's 32
+        // attention heads break the hand-rolled decode above 512, so the bundle is capped).
+        // Without it the chat budget can't cap output, generation overruns 512 into the KV
+        // ring, degenerates into garbage, and the decode fails with rc=-130.
+        SingleFileModel("llama3_2_1b", "Llama 3.2 1B (HNPU)", "https://huggingface.co/runanywhere/llama3_2_1b_HNPU/llama-3.2-1b.json", QHEXRT, LANGUAGE, 3_023_821_212L, contextLength = 512),
+        // Phi
+        SingleFileModel("phi_tiny_moe", "Phi Tiny MoE (HNPU)", "https://huggingface.co/runanywhere/phi_tiny_moe_HNPU/phimoe.json", QHEXRT, LANGUAGE, 4_721_494_520L),
+        // Gemma
+        SingleFileModel("gemma3n_e4b", "Gemma 3n E4B (HNPU)", "https://huggingface.co/runanywhere/gemma3n_e4b_HNPU/gemma-3n-E4B-it.json", QHEXRT, LANGUAGE, 10_929_816_419L),
+        SingleFileModel("gemma4_e2b", "Gemma 4 E2B (HNPU)", "https://huggingface.co/runanywhere/gemma4_e2b_HNPU/gemma4-e2b.json", QHEXRT, LANGUAGE, 9_252_275_672L),
+        SingleFileModel("gemma4_e4b", "Gemma 4 E4B (HNPU)", "https://huggingface.co/runanywhere/gemma4_e4b_HNPU/gemma-4-E4B.json", QHEXRT, LANGUAGE, 13_435_056_195L),
+        // Nemotron / NemoGuard (NVIDIA)
+        SingleFileModel("nemotron_nano_8b", "Llama 3.1 Nemotron Nano 8B (HNPU)", "https://huggingface.co/runanywhere/nemotron_nano_8b_HNPU/nemotron-nano-8b.json", QHEXRT, LANGUAGE, 8_609_694_487L),
+        SingleFileModel("nemoguard_content_8b", "NemoGuard 8B Content Safety (HNPU)", "https://huggingface.co/runanywhere/nemoguard_8b_content_safety_HNPU/nemoguard-content-8b.json", QHEXRT, LANGUAGE, 8_610_354_023L),
+        SingleFileModel("nemoguard_topic_8b", "NemoGuard 8B Topic Control (HNPU)", "https://huggingface.co/runanywhere/nemoguard_8b_topic_control_HNPU/nemoguard-topic-8b.json", QHEXRT, LANGUAGE, 8_609_694_527L),
+        // Bonsai (PrismML)
+        // v81 now ships the fully-on-NPU TRUE-TERNARY {-1,0,+1} decoder (no int8 fallback), not the
+        // older QNN W8A16 build — smaller download (~1.12 GB vs ~2.37 GB). v75/v79 are unchanged (W8A16).
+        SingleFileModel("ternary_bonsai_1_7b", "Ternary Bonsai 1.7B (HNPU)", "https://huggingface.co/runanywhere/ternary_bonsai_1_7b_HNPU/ternary-bonsai-1.7b-1024.json", QHEXRT, LANGUAGE, 1_117_937_842L, contextLength = 1_024),
+        // Maple is a v81-only true-ternary MoE bundle. The native catalog keeps
+        // this private row hidden until an HF token is configured.
+        // supportsThinking: manifest gen_prefill is "<think>\n", so the stream
+        // starts inside reasoning (commons stamps template_prefills_open_tag).
+        SingleFileModel("maple_preview", "Maple Preview 20B-A1B Ternary MoE (HNPU)", "https://huggingface.co/runanywhere/maple_preview_HNPU/maple-preview-1024.json", QHEXRT, LANGUAGE, 6_279_675_508L, contextLength = 1_024, supportsThinking = true),
+        SingleFileModel("bonsai_1_7b_1bit", "Bonsai-1.7B 1-bit (HNPU, fully-on-NPU)", "https://huggingface.co/runanywhere/bonsai_1_7b_1bit_HNPU/bonsai-1.7b-1bit-1024.json", QHEXRT, LANGUAGE, 902_000_000L, contextLength = 1_024),
+        SingleFileModel("bonsai_4b_1bit", "Bonsai-4B 1-bit (HNPU)", "https://huggingface.co/runanywhere/bonsai_4b_1bit_HNPU/bonsai-4b-1024.json", QHEXRT, LANGUAGE, 1_358_352_318L, contextLength = 1_024, supportsThinking = true),
+        SingleFileModel("bonsai_8b_1bit", "Bonsai-8B 1-bit (HNPU)", "https://huggingface.co/runanywhere/bonsai_8b_1bit_HNPU/bonsai-8b-1024.json", QHEXRT, LANGUAGE, 2_323_975_102L, contextLength = 1_024, supportsThinking = true),
+        SingleFileModel("bonsai_27b_1bit", "Bonsai-27B 1-bit (HNPU)", "https://huggingface.co/runanywhere/bonsai_27b_1bit_HNPU/bonsai-27b-1024.json", QHEXRT, LANGUAGE, 6_400_000_000L, contextLength = 1_024, supportsThinking = true),
+        // Cosmos3-Edge (NVIDIA)
+        // Cosmos3-Edge is one omnimodal model shipped as TWO HNPU repos, mirroring Qwen (understanding
+        // vs generation). The chat + vision rows BOTH point at the single "understanding" repo
+        // (cosmos3_edge_HNPU) with different manifest leaves — like qwen3_vl_HNPU hosts text + vlm —
+        // because text (split_generate) and VLM (cosmos3vl_generate) are two different device graphs.
+        // Each is its own model_id, so it downloads its own manifest-pruned bundle into its own model
+        // folder: a user who installs BOTH fetches the shared decoder/embed/lmhead weights twice. That
+        // duplication is accepted intentionally (no content-addressed de-dup layer). Diffusion is the
+        // separate generation repo.
+        // supportsThinking=false: the text manifest bakes a closed empty-think block for concise,
+        // self-terminating replies, so the app shows the answer rather than an always-empty reasoning section.
+        // The arch segment is intentionally OMITTED: native commons resolves the device's own
+        // child dir (v79/ or v81/) from the manifest leaf, so one row serves both chips. Both
+        // repos now ship v79/ alongside v81/ (v79 device-validated on SM8750).
+        SingleFileModel("cosmos3_edge_text", "Cosmos3-Edge Text (HNPU)", "https://huggingface.co/runanywhere/cosmos3_edge_HNPU/cosmos3-edge-text.manifest.json", QHEXRT, LANGUAGE, 2513105364L, contextLength = 2_048, supportsThinking = false),
+        // DeepSeek R1 Distill
+        SingleFileModel("deepseek_r1_distill_qwen_1_5b", "DeepSeek R1 Distill Qwen 1.5B (HNPU)", "https://huggingface.co/runanywhere/deepseek_r1_distill_qwen_1_5b_HNPU/DeepSeek-R1-Distill-Qwen-1.5B.json", QHEXRT, LANGUAGE, 6_211_227_068L, supportsThinking = true),
+        SingleFileModel("deepseek_r1_distill_qwen_7b", "DeepSeek R1 Distill Qwen 7B (HNPU)", "https://huggingface.co/runanywhere/deepseek_r1_distill_qwen_7b_HNPU/DeepSeek-R1-Distill-Qwen-7B.json", QHEXRT, LANGUAGE, 8_210_665_301L, supportsThinking = true),
+
+        // --- QHexRT / HNPU: VLM (multimodal, OCR, document parse) --------------
+        // Qwen
+        // The image path only exists under v79/ (QHexRT README footnote: v81 is text-path
+        // only — the merger+deepstack vision graph isn't exported for v81 yet). Size below
+        // is measured from the v79/ bundle since that's the only arch this row resolves on.
+        SingleFileModel("qwen3_vl", "Qwen3-VL 2B (HNPU)", "https://huggingface.co/runanywhere/qwen3_vl_HNPU/qwen3vl-2b-vlm-512.json", QHEXRT, MULTIMODAL, 3_220_398_168L, contextLength = 512),
+        // Gemma
+        SingleFileModel("gemma4_e2b_vlm", "Gemma 4 E2B Image (HNPU)", "https://huggingface.co/runanywhere/gemma4_e2b_HNPU/gemma4-e2b-vlm.json", QHEXRT, MULTIMODAL, 9_252_275_672L),
+        SingleFileModel("gemma4_e4b_vlm", "Gemma 4 E4B Image (HNPU)", "https://huggingface.co/runanywhere/gemma4_e4b_HNPU/gemma-4-E4B-vlm.json", QHEXRT, MULTIMODAL, 13_435_056_195L),
+        // Nemotron (NVIDIA)
+        SingleFileModel("nemotron_ocr", "Nemotron OCR (HNPU)", "https://huggingface.co/runanywhere/nemotron_ocr_HNPU", QHEXRT, MULTIMODAL, 121_193_004L),
+        SingleFileModel("nemotron_ocr_v1", "Nemotron OCR v1 (HNPU)", "https://huggingface.co/runanywhere/nemotron_ocr_v1_HNPU", QHEXRT, MULTIMODAL, 121_406_323L),
+        SingleFileModel("nemotron_parse", "Nemotron Parse (HNPU)", "https://huggingface.co/runanywhere/nemotron_parse_HNPU", QHEXRT, MULTIMODAL, 1_995_206_253L),
+        SingleFileModel("nemotron_nano_vl_8b", "Llama 3.1 Nemotron Nano VL 8B (HNPU)", "https://huggingface.co/runanywhere/nemotron_nano_vl_8b_HNPU/nemotron-vl-8b-vlm.json", QHEXRT, MULTIMODAL, 10_057_258_051L),
+        // Cosmos3-Edge (NVIDIA) — vision leaf of the shared "understanding" repo documented above.
+        SingleFileModel("cosmos3_edge_vlm", "Cosmos3-Edge Vision (HNPU)", "https://huggingface.co/runanywhere/cosmos3_edge_HNPU/cosmos3-edge-vlm.json", QHEXRT, MULTIMODAL, 3505000000L, contextLength = 2_048),
+        // InternVL3.5
+        SingleFileModel("internvl3_5_1b", "InternVL3.5 1B (HNPU)", "https://huggingface.co/runanywhere/internvl3_5_1b_HNPU", QHEXRT, MULTIMODAL, 3_067_933_894L, contextLength = 512),
+        SingleFileModel("lfm2_5_vl_3b", "LFM2.5-VL 3B (HNPU)", "https://huggingface.co/runanywhere/lfm2_5_vl_3b_HNPU/lfm2-5-vl-3b.json", QHEXRT, MULTIMODAL, 4_168_394_864L, contextLength = 512),
+
+        // --- QHexRT / HNPU: Embeddings ----------------------------------------
+        // Gemma
+        SingleFileModel("embeddinggemma_300m", "EmbeddingGemma 300M (HNPU)", "https://huggingface.co/runanywhere/embeddinggemma_300m_HNPU", QHEXRT, EMBEDDING, 566_263_339L),
+        // Nemotron / NV (NVIDIA)
+        SingleFileModel("nemotron_3_embed_1b", "Nemotron-3-Embed 1B (HNPU)", "https://huggingface.co/runanywhere/nemotron_3_embed_1b_HNPU/nemotron-3-embed-1b.json", QHEXRT, EMBEDDING, 2_302_290_226L),
+        SingleFileModel("nv_embedqa_1b", "NV-EmbedQA 1B (HNPU)", "https://huggingface.co/runanywhere/nv_embedqa_1b_HNPU", QHEXRT, EMBEDDING, 2_493_026_133L),
+        SingleFileModel("nv_rerankqa_1b", "NV-RerankQA 1B (HNPU)", "https://huggingface.co/runanywhere/nv_rerankqa_1b_HNPU", QHEXRT, EMBEDDING, 2_494_254_905L),
+        SingleFileModel("nv_embedcode_7b", "NV-EmbedCode 7B (HNPU)", "https://huggingface.co/runanywhere/nv_embedcode_7b_HNPU", QHEXRT, EMBEDDING, 7_276_868_122L),
+        SingleFileModel("llama_embed_nemotron_8b", "Llama Embed Nemotron 8B (HNPU)", "https://huggingface.co/runanywhere/llama_embed_nemotron_8b_HNPU", QHEXRT, EMBEDDING, 8_079_101_598L),
+        // SigLIP2
+        // SigLIP2 is a CLIP-style dual-tower embedder — routed as EMBEDDING so the app exercises it via the
+        // real embeddings.embed() API: embed(image path) uses the vision tower, embed(label) the text tower,
+        // and the harness does zero-shot classification (image closer to its true label than a distractor).
+        SingleFileModel("siglip2_base", "SigLIP2 Base (HNPU)", "https://huggingface.co/runanywhere/siglip2_base_HNPU", QHEXRT, EMBEDDING, 789_101_244L),
+
+        // --- QHexRT / HNPU: STT -----------------------------------------------
+        // Canary (NVIDIA)
+        SingleFileModel("canary_180m_flash", "Canary 180M Flash (HNPU)", "https://huggingface.co/runanywhere/canary_180m_flash_HNPU/canary-180m-flash.json", QHEXRT, STT, 401_629_133L),
+        SingleFileModel("canary_1b_flash", "Canary-1B-flash (HNPU)", "https://huggingface.co/runanywhere/canary_1b_flash_HNPU/canary-1b-flash.json", QHEXRT, STT, 1_835_592_227L),
+        // The V81 product bundle is the complete ASR pipeline. Pin the manifest
+        // path explicitly so the downloader does not depend on repository-root layout.
+        SingleFileModel("canary_qwen_2_5b", "Canary Qwen 2.5B (HNPU)", "https://huggingface.co/runanywhere/canary_qwen_2.5b_HNPU/v81/canary-qwen-2.5b.json", QHEXRT, STT, 5_491_333_979L),
+        // Moonshine
+        SingleFileModel("moonshine_tiny", "Moonshine Tiny (HNPU)", "https://huggingface.co/runanywhere/moonshine_tiny_HNPU/moonshine-tiny.json", QHEXRT, STT, 84_569_427L),
+        SingleFileModel("moonshine_base", "Moonshine Base (HNPU)", "https://huggingface.co/runanywhere/moonshine_base_HNPU/moonshine-base.json", QHEXRT, STT, 167_310_675L),
+        // Nemotron (NVIDIA)
+        SingleFileModel("nemotron_asr_streaming", "Nemotron ASR Streaming 0.6B (HNPU)", "https://huggingface.co/runanywhere/nemotron_asr_streaming_HNPU/nemotron-3.5-asr-streaming-0.6b.json", QHEXRT, STT, 1_361_283_432L),
+        // Parakeet (NVIDIA)
+        SingleFileModel("parakeet_tdt_0_6b_v2", "Parakeet TDT 0.6B v2 (HNPU)", "https://huggingface.co/runanywhere/parakeet_tdt_0.6b_v2_HNPU/parakeet-tdt-0.6b-v2.json", QHEXRT, STT, 1_280_063_837L),
+        SingleFileModel("parakeet_tdt_0_6b_v3", "Parakeet TDT 0.6B v3 (HNPU)", "https://huggingface.co/runanywhere/parakeet_tdt_0.6b_v3_HNPU/parakeet-tdt-0.6b.json", QHEXRT, STT, 1_317_902_802L),
+        SingleFileModel("parakeet_ctc_1_1b", "Parakeet CTC 1.1B (HNPU)", "https://huggingface.co/runanywhere/parakeet_ctc_1.1b_HNPU/parakeet-ctc-1.1b.json", QHEXRT, STT, 2_179_021_370L),
+        SingleFileModel("parakeet_rnnt_1_1b", "Parakeet RNNT 1.1B (HNPU)", "https://huggingface.co/runanywhere/parakeet_rnnt_1.1b_HNPU/parakeet-rnnt-1.1b.json", QHEXRT, STT, 2_211_659_923L),
+        // Whisper
+        SingleFileModel("whisper_base", "Whisper Base (HNPU)", "https://huggingface.co/runanywhere/whisper_base_HNPU/whisper-base.json", QHEXRT, STT, 221_522_616L),
+        SingleFileModel("whisper_small", "Whisper Small (HNPU)", "https://huggingface.co/runanywhere/whisper_small_HNPU/whisper-small.json", QHEXRT, STT, 676_713_240L),
+
+        // --- QHexRT / HNPU: TTS -----------------------------------------------
+        // Kitten
+        SingleFileModel("kitten_nano_0_8", "Kitten-nano-0.8-fp32 (HNPU)", "https://huggingface.co/runanywhere/kitten_nano_0_8_HNPU/kitten_nano08_v81.json", QHEXRT, TTS, 44_135_896L),
+        SingleFileModel("kitten_micro_0_8", "Kitten-micro-0.8 (HNPU)", "https://huggingface.co/runanywhere/kitten_micro_0_8_HNPU/kitten_micro08_v81.json", QHEXRT, TTS, 103_930_338L),
+        SingleFileModel("kitten_mini_0_8", "Kitten-mini-0.8 (HNPU)", "https://huggingface.co/runanywhere/kitten_mini_0_8_HNPU/kitten_mini08_v81.json", QHEXRT, TTS, 184_334_815L),
+        // Kokoro
+        SingleFileModel("kokoro_en", "Kokoro-82M EN (HNPU)", "https://huggingface.co/runanywhere/kokoro_en_HNPU/kokoro-en.json", QHEXRT, TTS, 470_739_484L),
+        // Magpie (NVIDIA)
+        // Repo-root URL: C++ pin_hf_ref_to_arch inserts v75/v81. Do not hardcode
+        // magpie-357m-v81.json — that filename is missing under the v75/ tree.
+        SingleFileModel("magpie_tts_357m", "Magpie-TTS Multilingual 357M (HNPU)", "https://huggingface.co/runanywhere/magpie_tts_357m_HNPU", QHEXRT, TTS, 749_093_186L),
+        // MeloTTS
+        SingleFileModel("melotts_en", "MeloTTS EN (HNPU)", "https://huggingface.co/runanywhere/melotts_en_HNPU/melotts-en.json", QHEXRT, TTS, 120_439_053L),
+
+        // --- QHexRT / HNPU: Image generation / inpainting ----------------------
+        // Cosmos3-Edge (NVIDIA) — the separate generation repo.
+        SingleFileModel("cosmos3_edge_diffusion", "Cosmos3-Edge Image (HNPU)", "https://huggingface.co/runanywhere/cosmos3_edge_image_HNPU/cosmos3-edge-diffusion.json", QHEXRT, IMAGE_GENERATION, 4_450_000_000L),
+        // LaMa
+        SingleFileModel("lama_dilated", "LaMa Dilated (HNPU)", "https://huggingface.co/runanywhere/lama_dilated_HNPU", QHEXRT, IMAGE_GENERATION, 98_509_597L),
+    )
+
+    // The Play build intentionally ships no refusal-removal or safety-bypass adapters.
+    val loraAdapters: List<LoraAdapterCatalogEntry> = emptyList()
+
+    // --- LLM (llama.cpp) ------------------------------------------------------
+    private val llm = listOf(
+        SingleFileModel(
+            "qwen3.5-0.8b-q4_k_m",
+            "Qwen3.5 0.8B Q4_K_M",
+            "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            memoryBytes = 900_000_000,
+            downloadBytes = 532_517_120,
+            supportsThinking = true
+        ),
+        // Qwen3.6 — MoE (35B total / 3B active), agentic-coding-focused release.
+        // Unsloth's dynamic UD-Q4_K_M quant, ~22.1 GB — heavy/desktop-scale; kept for
+        // completeness like the other multi-GB rows in this file.
+        SingleFileModel(
+            "qwen3.6-35b-a3b-ud-q4_k_m",
+            "Qwen3.6 35B-A3B UD-Q4_K_M (heavy)",
+            "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            22_134_528_992,
+            supportsThinking = true
+        ),
+        // Qwen3.8 — dense, brand-new Qwen release. ~17.1 GB — heavy/desktop-scale.
+        SingleFileModel(
+            "qwen3.8-27b-q4_k_m",
+            "Qwen3.8 27B Q4_K_M (heavy)",
+            "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            memoryBytes = 17_106_775_008,
+            downloadBytes = 16_464_440_224,
+            supportsThinking = true
+        ),
+        // LFM2 / LFM2.5 (Liquid AI)
+        // LFM2.5-230M on the CPU. Q4_K_M, not the fractionally smaller Q4_0
+        // (Q4_0 is 149 MB, Q4_K_M 153 MB): 4 MB buys K-quant mixed precision on the
+        // attention/embedding tensors, and Q4_K_M is the quantization every
+        // other GGUF row in this catalog uses.
+        // DISTINCT from the `lfm2_5_230m` QHEXRT row in npuCatalog — different
+        // framework, different artifact. Not a duplicate; do not merge them.
+        SingleFileModel(
+            "lfm2.5-230m-q4_k_m",
+            "LiquidAI LFM2.5 230M Q4_K_M",
+            "https://huggingface.co/LiquidAI/LFM2.5-230M-GGUF/resolve/main/LFM2.5-230M-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            // 153,406,304 B of weights plus KV cache and runtime overhead.
+            190_000_000
+        ),
+        SingleFileModel(
+            "lfm2.5-1.2b-instruct-q4_k_m",
+            "LiquidAI LFM2.5 1.2B Instruct Q4_K_M",
+            "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            900_000_000
+        ),
+        // Q8_0 sibling removed — one quantization per model (see the 350M note above).
+        SingleFileModel(
+            "lfm2.5-2.6b-q4_k_m",
+            "LiquidAI LFM2.5 2.6B Q4_K_M",
+            "https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/resolve/main/LFM2.5-2.6B-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            1_674_000_000,
+            supportsThinking = true
+        ),
+        // Gemma
+        // Gemma 4 license: Google's Gemma Terms of Use (https://ai.google.dev/gemma/terms),
+        // not Apache — same license family as the gemma3n/gemma4 QHexRT rows in npuCatalog
+        // above and the gemma-4-e2b/e4b-it VLM rows below.
+        SingleFileModel(
+            "gemma-4-e2b-it-q4_k_m",
+            "Gemma 4 E2B IT Q4_K_M",
+            "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            3_106_738_272
+        ),
+        // Text-only Q4_K_M build from unsloth (no mmproj / vision tower). The id carries an
+        // "-unsloth" tag so it does not collide with the vlm section's "gemma-4-e4b-it-q4_k_m"
+        // row below: same quant name, but a different upstream repo (ggml-org) paired with a
+        // vision projector — that row can see images, this text-only row cannot.
+        SingleFileModel(
+            "gemma-4-e4b-it-unsloth-q4_k_m",
+            "Gemma 4 E4B IT Q4_K_M",
+            "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            4_977_171_584
+        ),
+        SingleFileModel(
+            "gemma-4-12b-it-q4_k_m",
+            "Gemma 4 12B IT Q4_K_M",
+            "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            7_121_861_440
+        ),
+        // MoE (26B total / 4B active). Unsloth's dynamic UD-Q4_K_XL quant, ~17.0 GB —
+        // heavy/desktop-scale; listed for completeness like the other multi-GB rows in
+        // this file, filtered per device by the app's own hardware-tier/recommendation logic.
+        SingleFileModel(
+            "gemma-4-26b-a4b-it-ud-q4_k_xl",
+            "Gemma 4 26B-A4B IT UD-Q4_K_XL (MoE, heavy)",
+            "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+            LLAMA,
+            LANGUAGE,
+            17_010_980_576
+        ),
+        // Largest dense Gemma 4 (31B). TWO quants are deliberately kept here — an explicit
+        // exception to the "one quantization per model" rule noted above the LFM2.5-230M row
+        // — because the standard 4-bit build alone (~18.3 GB) is desktop-scale, so the smaller
+        // 2-bit UD-Q2_K_XL build (~11.8 GB) is also carried as the more plausible on-device
+        // option. Both rows are heavy/desktop-scale downloads.
+        SingleFileModel(
+            "gemma-4-31b-it-q4_k_m",
+            "Gemma 4 31B IT Q4_K_M (heavy)",
+            "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/gemma-4-31B-it-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            18_323_733_440
+        ),
+        // Granite (IBM)
+        // Apache 2.0 (verified via HF cardData.license). Dense, three sizes.
+        SingleFileModel(
+            "granite-4.1-3b-q4_k_m",
+            "IBM Granite 4.1 3B Q4_K_M",
+            "https://huggingface.co/unsloth/granite-4.1-3b-GGUF/resolve/main/granite-4.1-3b-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            2_099_502_400
+        ),
+        SingleFileModel(
+            "granite-4.1-8b-q4_k_m",
+            "IBM Granite 4.1 8B Q4_K_M",
+            "https://huggingface.co/unsloth/granite-4.1-8b-GGUF/resolve/main/granite-4.1-8b-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            5_347_915_136
+        ),
+        // Desktop-scale (~17.5 GB) — flagged (heavy), same convention as the Gemma 4 26B/31B
+        // rows above.
+        SingleFileModel(
+            "granite-4.1-30b-q4_k_m",
+            "IBM Granite 4.1 30B Q4_K_M (heavy)",
+            "https://huggingface.co/unsloth/granite-4.1-30b-GGUF/resolve/main/granite-4.1-30b-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            17_490_241_472
+        ),
+        // Nemotron (NVIDIA)
+        // Exact P0 NVIDIA checkpoint. The pinned llama.cpp fork has native
+        // `nemotron` support; this exact Q4_K_M artifact was load/inference
+        // checked through rcli on macOS before being exposed in the catalog.
+        SingleFileModel(
+            "llama-3.1-nemotron-nano-4b-v1.1-q4_k_m",
+            "NVIDIA Llama 3.1 Nemotron Nano 4B v1.1 Q4_K_M",
+            "https://huggingface.co/bartowski/nvidia_Llama-3.1-Nemotron-Nano-4B-v1.1-GGUF/resolve/4eb0ffaec9b21a411cf4fa39df2fba0b7a972e11/nvidia_Llama-3.1-Nemotron-Nano-4B-v1.1-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            memoryBytes = 4L * 1_024L * 1_024L * 1_024L,
+            downloadBytes = 2_778_285_600L,
+            contextLength = 4_096,
+        ),
+        SingleFileModel(
+            "llama-3.1-nemotron-nano-8b-v1-q4_k_m",
+            "NVIDIA Llama 3.1 Nemotron Nano 8B v1 Q4_K_M",
+            "https://huggingface.co/bartowski/nvidia_Llama-3.1-Nemotron-Nano-8B-v1-GGUF/resolve/6f3d46cfbc39ce7a1bec89654305515d904e8102/nvidia_Llama-3.1-Nemotron-Nano-8B-v1-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            memoryBytes = 6L * 1_024L * 1_024L * 1_024L,
+            downloadBytes = 4_920_736_864L,
+            contextLength = 4_096,
+        ),
+        SingleFileModel(
+            "nemotron-mini-4b-instruct-q4_k_m",
+            "NVIDIA Nemotron Mini 4B Instruct Q4_K_M",
+            "https://huggingface.co/bartowski/Nemotron-Mini-4B-Instruct-GGUF/resolve/fb49cde090c86092d89905bea2ffc41c23c2615e/Nemotron-Mini-4B-Instruct-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            2_697_387_072,
+            contextLength = 4_096
+        ),
+        // Bonsai (PrismML)
+        // Bonsai family at TRUE 1-bit (Q1_0, ~1.125 bit/wt) on CPU via llama.cpp — the same GGUF
+        // that runs on the NPU (bonsai_{4b,8b,27b}_1bit, QHEXRT). Requires a llama.cpp build with
+        // qwen3_5 GatedDeltaNet + Q1_0 support (the app's LlamaCPP engine must be the patched fork).
+        SingleFileModel(
+            "bonsai-1.7b-q1_0",
+            "Bonsai-1.7B 1-bit Q1_0 (CPU)",
+            "https://huggingface.co/prism-ml/Bonsai-1.7B-gguf/resolve/main/Bonsai-1.7B-Q1_0.gguf",
+            LLAMA,
+            LANGUAGE,
+            248_302_272,
+            contextLength = 1_024,
+            supportsThinking = true
+        ),
+        SingleFileModel(
+            "bonsai-4b-q1_0",
+            "Bonsai-4B 1-bit Q1_0 (CPU)",
+            "https://huggingface.co/prism-ml/Bonsai-4B-gguf/resolve/main/Bonsai-4B-Q1_0.gguf",
+            LLAMA,
+            LANGUAGE,
+            572_270_624,
+            contextLength = 1_024,
+            supportsThinking = true
+        ),
+        SingleFileModel(
+            "bonsai-8b-q1_0",
+            "Bonsai-8B 1-bit Q1_0 (CPU)",
+            "https://huggingface.co/prism-ml/Bonsai-8B-gguf/resolve/main/Bonsai-8B-Q1_0.gguf",
+            LLAMA,
+            LANGUAGE,
+            1_158_654_496,
+            contextLength = 1_024,
+            supportsThinking = true
+        ),
+        SingleFileModel(
+            "bonsai-27b-q1_0",
+            "Bonsai-27B 1-bit Q1_0 (CPU)",
+            "https://huggingface.co/prism-ml/Bonsai-27B-gguf/resolve/main/Bonsai-27B-Q1_0.gguf",
+            LLAMA,
+            LANGUAGE,
+            3_803_452_480,
+            contextLength = 1_024,
+            supportsThinking = true
+        ),
+        // NOTE: Ternary-Bonsai GGUF (Q2_0/PQ2_0) is intentionally NOT registered.
+        // Verified via rcli this session: the pinned PrismML llama.cpp fork
+        // (prism-b9591-62061f9, see sdk/runanywhere-commons/VERSIONS) rejects it —
+        // "invalid ggml type 142" — it only added Q1_0 (plain Bonsai) support, not
+        // Ternary-Bonsai's tensor encoding. Re-enable once the fork adds it.
+        // Ternary-Bonsai MLX works fine (iOS/macOS only — no MLX on Android).
+
+        // Added from the verified model list.
+        SingleFileModel(
+            "lfm2.5-1.2b-thinking-q4_k_m",
+            "LFM2.5 1.2B Thinking Q4_K_M",
+            "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Thinking-GGUF/resolve/main/LFM2.5-1.2B-Thinking-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            memoryBytes = 900_000_000,
+            downloadBytes = 730_895_360,
+            supportsThinking = true
+        ),
+        SingleFileModel(
+            "qwen3.5-2b-q4_k_m",
+            "Qwen3.5 2B Q4_K_M",
+            "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            memoryBytes = 1_550_000_000,
+            downloadBytes = 1_280_835_840,
+            supportsThinking = true
+        ),
+        SingleFileModel(
+            "qwen3.5-4b-q4_k_m",
+            "Qwen3.5 4B Q4_K_M",
+            "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            memoryBytes = 3_350_000_000,
+            downloadBytes = 2_740_937_888,
+            supportsThinking = true
+        ),
+        SingleFileModel(
+            "qwen3.5-9b-q4_k_m",
+            "Qwen3.5 9B Q4_K_M",
+            "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
+            LLAMA,
+            LANGUAGE,
+            memoryBytes = 6_950_000_000,
+            downloadBytes = 5_680_522_464,
+            supportsThinking = true
+        ),
+        SingleFileModel(
+            "maple-preview-tq1_0",
+            "Maple Preview 20B-A1B TQ1_0 (1-bit)",
+            "https://huggingface.co/deepgrove/maple-preview-GGUF/resolve/main/maple-preview-TQ1_0-head-Q4_K.gguf",
+            LLAMA,
+            LANGUAGE,
+            memoryBytes = 6_100_000_000,
+            downloadBytes = 4_984_016_416,
+            supportsThinking = true
+        ),
+    )
+
+    // --- VLM (llama.cpp, multimodal) ------------------------------------------
+    private val vlm = listOf(
+        // SmolVLM / SmolVLM2
+        MultiFileModel(
+            "smolvlm2-256m-video-instruct-q8_0", "SmolVLM2 256M Video Instruct Q8_0", LLAMA, MULTIMODAL, 450_000_000,
+            files = listOf(
+                ModelFile(
+                    "https://huggingface.co/ggml-org/SmolVLM2-256M-Video-Instruct-GGUF/resolve/main/SmolVLM2-256M-Video-Instruct-Q8_0.gguf",
+                    "SmolVLM2-256M-Video-Instruct-Q8_0.gguf"
+                ),
+                ModelFile(
+                    "https://huggingface.co/ggml-org/SmolVLM2-256M-Video-Instruct-GGUF/resolve/main/mmproj-SmolVLM2-256M-Video-Instruct-Q8_0.gguf",
+                    "mmproj-SmolVLM2-256M-Video-Instruct-Q8_0.gguf"
+                ),
+            ),
+        ),
+        MultiFileModel(
+            "smolvlm2-500m-video-instruct-q8_0", "SmolVLM2 500M Video Instruct Q8_0", LLAMA, MULTIMODAL, 800_000_000,
+            files = listOf(
+                ModelFile(
+                    "https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/SmolVLM2-500M-Video-Instruct-Q8_0.gguf",
+                    "SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
+                ),
+                ModelFile(
+                    "https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf",
+                    "mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
+                ),
+            ),
+        ),
+        ArchiveModel(
+            "smolvlm-500m-instruct-q8_0",
+            "SmolVLM 500M Instruct",
+            "https://github.com/RunanywhereAI/sherpa-onnx/releases/download/runanywhere-vlm-models-v1/smolvlm-500m-instruct-q8_0.tar.gz",
+            LLAMA,
+            MULTIMODAL,
+            600_000_000,
+            TAR_GZ,
+            ArchiveStructure.ARCHIVE_STRUCTURE_DIRECTORY_BASED
+        ),
+        // Q4_K_M, matching the Qwen2.5-VL 3B row beside it and the LFM2.5 2.6B LLM
+        // row this VLM is built on: one quantization per model, and Q4_K_M is what
+        // every other 3B-class GGUF row in this catalog ships. The mmproj is Q8_0
+        // because the vision tower is quantization-sensitive; that is the same
+        // Q4_K_M-weights + Q8_0-mmproj pairing the Qwen2-VL, Qwen2.5-VL and Gemma 4
+        // E4B rows use, and the only mmproj quant LiquidAI publishes below F16.
+        //
+        // Pinned to a revision rather than `main` because the per-file sizeBytes
+        // below are exact (verified by Content-Range against this sha, 1_674_454_240
+        // + 583_109_120): declared bytes feed the post-download size guard and the
+        // progress bar's denominator, so a silent upstream re-upload would break
+        // both. Every row in this file that declares exact sizes pins its sha.
+        //
+        // DISTINCT from the `lfm2_5_vl_3b` QHEXRT row in npuCatalog: different
+        // framework, different artifact. Not a duplicate; do not merge them.
+        //
+        // memoryBytes is RAM, not transfer: 2.26 GB of weights plus KV cache and
+        // the image-encoder activations, so it is stated separately from the exact
+        // downloadBytes rather than defaulting to it.
+        MultiFileModel(
+            "lfm2.5-vl-3b-q4_k_m",
+            "LFM2.5-VL 3B Q4_K_M",
+            LLAMA,
+            MULTIMODAL,
+            memoryBytes = 3L * 1_024L * 1_024L * 1_024L,
+            downloadBytes = 2_257_563_360L,
+            files = listOf(
+                ModelFile(
+                    "https://huggingface.co/LiquidAI/LFM2.5-VL-3B-GGUF/resolve/" +
+                        "3e0e828198e2abb75a957ad823f5d691c13f0f28/LFM2.5-VL-3B-Q4_K_M.gguf",
+                    "LFM2.5-VL-3B-Q4_K_M.gguf",
+                    1_674_454_240,
+                ),
+                ModelFile(
+                    "https://huggingface.co/LiquidAI/LFM2.5-VL-3B-GGUF/resolve/" +
+                        "3e0e828198e2abb75a957ad823f5d691c13f0f28/mmproj-LFM2.5-VL-3B-Q8_0.gguf",
+                    "mmproj-LFM2.5-VL-3B-Q8_0.gguf",
+                    583_109_120,
+                ),
+            ),
+        ),
+        // NOTE: LFM2.5-VL-3B-MLX-4bit is intentionally NOT registered. MLX is an
+        // Apple-silicon runtime; there is no MLX engine on Android (see the
+        // Ternary-Bonsai note in `llm` above, and HuggingFaceHubClient's GGUF-only
+        // search sets). The GGUF row above is the runnable variant on this platform.
+        // Gemma
+        MultiFileModel(
+            "gemma-4-e2b-it-q8_0", "Gemma 4 E2B IT Q8_0 (Experimental)", LLAMA, MULTIMODAL, 3_000_000_000,
+            files = listOf(
+                ModelFile(
+                    "https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q8_0.gguf",
+                    "gemma-4-E2B-it-Q8_0.gguf"
+                ),
+                ModelFile(
+                    "https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF/resolve/main/mmproj-gemma-4-E2B-it-Q8_0.gguf",
+                    "mmproj-gemma-4-E2B-it-Q8_0.gguf"
+                ),
+            ),
+        ),
+        MultiFileModel(
+            "gemma-4-e4b-it-q4_k_m", "Gemma 4 E4B IT Q4_K_M (Experimental)", LLAMA, MULTIMODAL, 5_500_000_000,
+            files = listOf(
+                // ggml-org publishes no Q4_K_M for this repo — Q4_0 is its only 4-bit build.
+                ModelFile(
+                    "https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_0.gguf",
+                    "gemma-4-E4B-it-Q4_0.gguf"
+                ),
+                ModelFile(
+                    "https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/mmproj-gemma-4-E4B-it-Q8_0.gguf",
+                    "mmproj-gemma-4-E4B-it-Q8_0.gguf"
+                ),
+            ),
+        ),
+        // Meta (Muse Glimmer) — everything-else-alphabetically, after the named families above.
+        // Meta Superintelligence Labs, Apache 2.0, released 2026-08-10. Genuinely VLM-capable
+        // (real mmproj vision projector). unsloth's top-tier dynamic 4-bit build — no plain
+        // Q4_K_M exists and the model card gives no separate recommendation. Desktop-scale
+        // (~17.9 GB combined) — flagged (heavy), same convention as the Gemma 4 rows above.
+        MultiFileModel(
+            "muse-glimmer-30b-ud-q4_k_xl",
+            "Meta Muse Glimmer 30B UD-Q4_K_XL (heavy)",
+            LLAMA,
+            MULTIMODAL,
+            memoryBytes = 18L * 1_024L * 1_024L * 1_024L,
+            downloadBytes = 17_929_907_456L,
+            files = listOf(
+                ModelFile(
+                    "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+                    "Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+                    15_878_222_368L,
+                ),
+                ModelFile(
+                    "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/mmproj-Muse-Glimmer-30B-Q8_0.gguf",
+                    "mmproj-Muse-Glimmer-30B-Q8_0.gguf",
+                    2_051_685_088L,
+                ),
+            ),
+        ),
+        // NVIDIA (Nemotron) — everything-else-alphabetically, after Meta above.
+        // MoE (31B total / 3B active). NVIDIA Open Model License — same license family as the
+        // nemotron_nano_vl_8b / nemotron_ocr / nemotron_parse QHexRT rows in npuCatalog above.
+        // Upstream markets this checkpoint as "Omni" (image + audio + video), but llama.cpp's
+        // mmproj here is an IMAGE-ONLY vision projector, so only the vision+text path is
+        // exposed through this row — audio/video input is NOT usable through llama.cpp on
+        // Android. Name and comments intentionally avoid claiming full omni capability.
+        // Desktop-scale (~25.5 GB combined) — flagged (heavy).
+        MultiFileModel(
+            "nemotron-3-nano-30b-a3b-reasoning-vision-ud-q4_k_m",
+            "NVIDIA Nemotron-3 Nano 30B-A3B Reasoning (Vision) UD-Q4_K_M (heavy)",
+            LLAMA,
+            MULTIMODAL,
+            memoryBytes = 26L * 1_024L * 1_024L * 1_024L,
+            downloadBytes = 25_474_563_776L,
+            files = listOf(
+                ModelFile(
+                    "https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-Omni-30B-A3B-Reasoning-GGUF/resolve/main/NVIDIA-Nemotron-3-Nano-Omni-30B-A3B-Reasoning-UD-Q4_K_M.gguf",
+                    "NVIDIA-Nemotron-3-Nano-Omni-30B-A3B-Reasoning-UD-Q4_K_M.gguf",
+                    23_887_023_552L,
+                ),
+                ModelFile(
+                    "https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-Omni-30B-A3B-Reasoning-GGUF/resolve/main/mmproj-F16.gguf",
+                    "mmproj-F16.gguf",
+                    1_587_540_224L,
+                ),
+            ),
+        ),
+        // Fara (Computer-Use Agent) — `cuaProfile` is carried through
+        // ModelRegistration.multiFile so RunAnywhere.CUA has a drivable model.
+        MultiFileModel(
+            "fara1.5-4b-q4_k_m", "Fara1.5 4B Computer-Use Agent Q4_K_M", LLAMA, MULTIMODAL, 3_300_000_000,
+            files = listOf(
+                ModelFile(
+                    "https://huggingface.co/runanywhere/Fara1.5-4B-GGUF/resolve/main/Fara1.5-4B-Q4_K_M.gguf",
+                    "Fara1.5-4B-Q4_K_M.gguf"
+                ),
+                ModelFile(
+                    "https://huggingface.co/runanywhere/Fara1.5-4B-GGUF/resolve/main/mmproj-Fara1.5-4B-f16.gguf",
+                    "mmproj-Fara1.5-4B-f16.gguf"
+                ),
+            ),
+            cuaProfile = FARA_PROFILE,
+        ),
+    )
+
+    private val speech = listOf(
+        // --- STT (Sherpa-ONNX) ------------------------------------------------
+        // Canary (NVIDIA)
+        MultiFileModel(
+            "sherpa-nemo-canary-180m-flash-int8",
+            "NVIDIA Canary 180M Flash INT8 (Sherpa-ONNX)",
+            SHERPA,
+            STT,
+            207_170_046,
+            files = listOf(
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8/resolve/9077164e0d3dd1d5353743e89ceaa1d3a770838c/encoder.int8.onnx", "encoder.int8.onnx", 132_678_643),
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8/resolve/9077164e0d3dd1d5353743e89ceaa1d3a770838c/decoder.int8.onnx", "decoder.int8.onnx", 74_437_848),
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8/resolve/9077164e0d3dd1d5353743e89ceaa1d3a770838c/tokens.txt", "tokens.txt", 53_555),
+            ),
+        ),
+        // Parakeet (NVIDIA)
+        // Official sherpa-onnx exports of the NVIDIA NeMo parakeet-tdt_ctc
+        // checkpoints, published upstream with complete metadata. Only the CTC
+        // branch is exported, so the single `model[.int8].onnx` + `tokens.txt`
+        // layout routes through the backend's NeMo CTC path.
+        MultiFileModel(
+            "sherpa-nemo-parakeet-tdt-ctc-110m-en-int8",
+            "NVIDIA Parakeet TDT-CTC 110M EN (Sherpa-ONNX)",
+            SHERPA,
+            STT,
+            memoryBytes = 1_024L * 1_024L * 1_024L,
+            downloadBytes = 458_170_974,
+            files =
+                listOf(
+                    ModelFile(
+                        "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000/resolve/3af92f152d32c836acabf38f4c993bc96b80eb2d/model.onnx",
+                        "model.onnx",
+                        458_161_021,
+                        "936806cf3dd0db5aba53f8c7410bb5632d7a8ad6b2c51009f5e4fc0890ec76bf",
+                    ),
+                    ModelFile(
+                        "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000/resolve/3af92f152d32c836acabf38f4c993bc96b80eb2d/tokens.txt",
+                        "tokens.txt",
+                        9_953,
+                    ),
+                ),
+        ),
+        MultiFileModel(
+            "sherpa-nemo-parakeet-tdt-ctc-0.6b-ja-int8",
+            "NVIDIA Parakeet TDT-CTC 0.6B Japanese INT8 (Sherpa-ONNX)",
+            SHERPA,
+            STT,
+            memoryBytes = 1_536L * 1_024L * 1_024L,
+            downloadBytes = 655_571_161,
+            files =
+                listOf(
+                    ModelFile(
+                        "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8/resolve/bef18eb066808c90bd0f5df5be685767b0732de8/model.int8.onnx",
+                        "model.int8.onnx",
+                        655_542_604,
+                        "3addd00ef5bd1742078389e540b77394e4a508bdf2f4c9ad1b4a76d93e76598e",
+                    ),
+                    ModelFile(
+                        "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8/resolve/bef18eb066808c90bd0f5df5be685767b0732de8/tokens.txt",
+                        "tokens.txt",
+                        28_557,
+                    ),
+                ),
+        ),
+        MultiFileModel(
+            "sherpa-nemo-parakeet-tdt-0.6b-v2-int8",
+            "NVIDIA Parakeet TDT 0.6B v2 INT8 (Sherpa-ONNX)",
+            SHERPA,
+            STT,
+            661_190_513,
+            files = listOf(
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/1ab9323565ddb038682214b292f588070a538ce2/encoder.int8.onnx", "encoder.int8.onnx", 652_184_296),
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/1ab9323565ddb038682214b292f588070a538ce2/decoder.int8.onnx", "decoder.int8.onnx", 7_257_753),
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/1ab9323565ddb038682214b292f588070a538ce2/joiner.int8.onnx", "joiner.int8.onnx", 1_739_080),
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/1ab9323565ddb038682214b292f588070a538ce2/tokens.txt", "tokens.txt", 9_384),
+            ),
+        ),
+        MultiFileModel(
+            "sherpa-nemo-parakeet-tdt-0.6b-v3-int8",
+            "NVIDIA Parakeet TDT 0.6B v3 INT8 (Sherpa-ONNX)",
+            SHERPA,
+            STT,
+            670_478_772,
+            files = listOf(
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/encoder.int8.onnx", "encoder.int8.onnx", 652_184_281),
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/decoder.int8.onnx", "decoder.int8.onnx", 11_845_275),
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/joiner.int8.onnx", "joiner.int8.onnx", 6_355_277),
+                ModelFile("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/tokens.txt", "tokens.txt", 93_939),
+            ),
+        ),
+        // The upstream OpenVoiceOS export omits three metadata_props entries
+        // Sherpa requires, so it cannot be loaded as published. This repo is
+        // that export with the entries added; provenance and a reproduction
+        // script live in its model card. Runtime RAM is based on the observed
+        // Android PSS (~1,760,875 KB), not the smaller aggregate download size.
+        MultiFileModel(
+            "sherpa-nemo-parakeet-ctc-1.1b-int8",
+            "NVIDIA Parakeet CTC 1.1B INT8 (Sherpa-ONNX)",
+            SHERPA,
+            STT,
+            memoryBytes = 2L * 1_024L * 1_024L * 1_024L,
+            downloadBytes = 1_110_024_519,
+            files =
+                listOf(
+                    ModelFile(
+                        "https://huggingface.co/runanywhere/sherpa-onnx-nemo-parakeet-ctc-1.1b-int8/resolve/48a549f552774db3cd09dd1548f3d1a2b37bc7c5/model.int8.onnx",
+                        "model.int8.onnx",
+                        1_110_014_145,
+                        "62f73c17a5301c048c7273cf24ef1cd0c3621d3625c5415fbafe5633d7bf2f98",
+                    ),
+                    ModelFile(
+                        "https://huggingface.co/runanywhere/sherpa-onnx-nemo-parakeet-ctc-1.1b-int8/resolve/48a549f552774db3cd09dd1548f3d1a2b37bc7c5/tokens.txt",
+                        "tokens.txt",
+                        10_374,
+                        "ed16e1a4e3a3aa379138c0b1888e5d49f993c9d512b2be4d46e90a87afd54921",
+                    ),
+                ),
+        ),
+        // Whisper
+        ArchiveModel(
+            "sherpa-onnx-whisper-tiny.en",
+            "Sherpa Whisper Tiny (ONNX)",
+            "https://github.com/RunanywhereAI/sherpa-onnx/releases/download/runanywhere-models-v1/sherpa-onnx-whisper-tiny.en.tar.gz",
+            SHERPA,
+            ModelCategory.MODEL_CATEGORY_SPEECH_RECOGNITION,
+            75_000_000,
+            TAR_GZ,
+            ArchiveStructure.ARCHIVE_STRUCTURE_NESTED_DIRECTORY
+        ),
+
+        // --- TTS (Sherpa-ONNX Piper VITS) -------------------------------------
+        // Piper VITS
+        ArchiveModel(
+            "vits-piper-en_US-lessac-medium",
+            "Piper TTS (US English - Medium)",
+            "https://github.com/RunanywhereAI/sherpa-onnx/releases/download/runanywhere-models-v1/vits-piper-en_US-lessac-medium.tar.gz",
+            SHERPA,
+            ModelCategory.MODEL_CATEGORY_SPEECH_SYNTHESIS,
+            65_000_000,
+            TAR_GZ,
+            ArchiveStructure.ARCHIVE_STRUCTURE_NESTED_DIRECTORY
+        ),
+        ArchiveModel(
+            "vits-piper-en_GB-alba-medium",
+            "Piper TTS (British English)",
+            "https://github.com/RunanywhereAI/sherpa-onnx/releases/download/runanywhere-models-v1/vits-piper-en_GB-alba-medium.tar.gz",
+            SHERPA,
+            ModelCategory.MODEL_CATEGORY_SPEECH_SYNTHESIS,
+            65_000_000,
+            TAR_GZ,
+            ArchiveStructure.ARCHIVE_STRUCTURE_NESTED_DIRECTORY
+        ),
+        // Supertone (Supertonic TTS)
+        // Supertone/supertonic-3 (released 2026-05-18) ships fp32 ONNX weights plus
+        // voice_styles/*.json + unicode_indexer.json — sherpa-onnx's Supertonic provider
+        // (OfflineTtsSupertonicModelConfig) does not load those directly: it expects
+        // INT8-quantized *.int8.onnx weights plus a converted voice.bin / unicode_indexer.bin
+        // (see sherpa-onnx's scripts/supertonic/run.sh stage 4). This row instead points at
+        // csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11, the official pre-converted
+        // export named in sherpa-onnx's own Java/C++ examples — the only Supertonic 3 bundle
+        // this app can actually load, and the same "pre-converted HF mirror" convention the
+        // sherpa-nemo-* STT rows above already use. Pinned to its exact commit because the
+        // per-file sizes below are exact.
+        // sherpa-onnx added Supertonic 3 support in v1.13.2 (2026-05-13, PR #3605/#3609). The
+        // vendored runanywhere-onnx AAR (SDK 0.20.19) pins Android sherpa-onnx to the v1.13.2
+        // tag commit exactly (13d0ae6c539d2809d32f5eaa3ef1db0c459d0b24, confirmed against both
+        // this app's own dependencies/versions.json mirror in the SDK repo and the upstream
+        // k2-fsa/sherpa-onnx v1.13.2 git tag) — the earliest SDK release that can run it, and
+        // the one this app already depends on.
+        MultiFileModel(
+            "sherpa-supertonic-3-tts-int8",
+            "Supertonic 3 TTS INT8 (Sherpa-ONNX)",
+            SHERPA,
+            ModelCategory.MODEL_CATEGORY_SPEECH_SYNTHESIS,
+            downloadBytes = 145_295_768,
+            memoryBytes = 145_295_768,
+            files = listOf(
+                ModelFile(
+                    "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/duration_predictor.int8.onnx",
+                    "duration_predictor.int8.onnx",
+                    3_700_147,
+                ),
+                ModelFile(
+                    "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/text_encoder.int8.onnx",
+                    "text_encoder.int8.onnx",
+                    36_416_150,
+                ),
+                ModelFile(
+                    "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/vector_estimator.int8.onnx",
+                    "vector_estimator.int8.onnx",
+                    78_400_833,
+                ),
+                ModelFile(
+                    "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/vocoder.int8.onnx",
+                    "vocoder.int8.onnx",
+                    25_991_073,
+                ),
+                ModelFile(
+                    "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/tts.json",
+                    "tts.json",
+                    8_253,
+                ),
+                ModelFile(
+                    "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/unicode_indexer.bin",
+                    "unicode_indexer.bin",
+                    262_144,
+                ),
+                ModelFile(
+                    "https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4/voice.bin",
+                    "voice.bin",
+                    517_168,
+                ),
+            ),
+        ),
+        // NOTE: NVIDIA Nemotron-3.5-ASR-Streaming 0.6B (onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4)
+        // is intentionally NOT registered. Multilingual Nemotron-3.5 streaming ASR support landed
+        // across sherpa-onnx v1.13.3-v1.13.5 (PRs #3671, #3732/#3734/#3741/#3785 — the last of
+        // which is a decoding correctness fix for exactly this NeMo streaming-transducer format,
+        // released 2026-08-11). The vendored runanywhere-onnx AAR pins Android sherpa-onnx to the
+        // v1.13.2 tag commit (13d0ae6c539d2809d32f5eaa3ef1db0c459d0b24) — one release before this
+        // model's format is supported at all, and three before its decoding fix. Re-enable once
+        // the SDK bumps its vendored sherpa-onnx past v1.13.5.
+    )
+
+    private val misc = listOf(
+        // --- VAD (Silero, ONNX) -----------------------------------------------
+        SingleFileModel(
+            "silero-vad",
+            "Silero VAD",
+            "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx",
+            ONNX,
+            ModelCategory.MODEL_CATEGORY_VOICE_ACTIVITY_DETECTION,
+            // Actual silero_vad.onnx artifact size (verified Content-Length). This value
+            // doubles as download_size_bytes, which feeds the post-download size guard —
+            // an over-stated 5 MB tripped the guard on a valid ~2.3 MB download.
+            2_327_524
+        ),
+
+        // --- Embeddings (llama.cpp) -------------------------------------------
+        // Nemotron (NVIDIA)
+        // Exact P0 NVIDIA embedding checkpoint. This pinned GGUF passed a real
+        // RunAnywhere llama.cpp embedding-ops smoke on macOS (2048 dimensions,
+        // finite L2-normalized output) before being exposed cross-platform.
+        SingleFileModel(
+            "nemotron-3-embed-1b-q4_k_m",
+            "NVIDIA Nemotron 3 Embed 1B Q4_K_M",
+            "https://huggingface.co/zenmagnets/Nemotron-3-Embed-1B-Q4_K_M-GGUF/resolve/06df1fde6f7009c91f6cc3cd520081921929a678/nemotron-3-embed-1b-q4_k_m.gguf",
+            LLAMA,
+            EMBEDDING,
+            749_352_096,
+        ),
+        // Exact P0 Llama Nemotron Embed v2 checkpoint. This pinned GGUF also
+        // passed the real RunAnywhere llama.cpp embedding-ops smoke on macOS
+        // (2048 dimensions, finite L2-normalized output).
+        SingleFileModel(
+            "llama-nemotron-embed-1b-v2-q4_k_m",
+            "NVIDIA Llama Nemotron Embed 1B v2 Q4_K_M",
+            "https://huggingface.co/mykor/llama-nemotron-embed-1b-v2-GGUF/resolve/bf7c9832b1d76f86777379e58b7b74805ee58006/llama-nemotron-embed-1B-v2-Q4_K_M.gguf",
+            LLAMA,
+            EMBEDDING,
+            807_690_624,
+        ),
+        // NVIDIA Llama Embed Nemotron 8B — the only NVIDIA embedder with a
+        // portable GGUF that was previously catalogued HNPU-only. Llama-family
+        // bidirectional embedder; runs through the llama.cpp embedding path like
+        // the two 1B rows above. The 4.63 GB Q4_K_M file exceeds the WASM 4 GiB
+        // heap so it is intentionally Web-excluded; on mobile the download
+        // transport size is kept separate from a mandatory 6 GiB available-RAM
+        // preflight (mirrors the Nano-8B gate).
+        SingleFileModel(
+            "llama-embed-nemotron-8b-q4_k_m",
+            "NVIDIA Llama Embed Nemotron 8B Q4_K_M",
+            "https://huggingface.co/mradermacher/llama-embed-nemotron-8b-GGUF/resolve/e7ae3cbae4f7693bbd75ec959bf293f39e1f2e25/llama-embed-nemotron-8b.Q4_K_M.gguf",
+            LLAMA,
+            EMBEDDING,
+            memoryBytes = 6L * 1_024L * 1_024L * 1_024L,
+            downloadBytes = 4_625_233_184L,
+        ),
+
+        // --- Embeddings (ONNX, RAG) -------------------------------------------
+        // MiniLM
+        MultiFileModel(
+            "all-minilm-l6-v2",
+            "All MiniLM L6 v2 (Embedding)",
+            ONNX,
+            ModelCategory.MODEL_CATEGORY_EMBEDDING,
+            memoryBytes = 25_500_000,
+            downloadBytes = 23_203_878,
+            files = listOf(
+                // Quantized variant — the fp32 onnx/model.onnx is 90.4 MB; the
+                // declared sizes previously pointed at the wrong artifact.
+                ModelFile(
+                    "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx",
+                    "model.onnx",
+                    22_972_370,
+                ),
+                ModelFile(
+                    "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/vocab.txt",
+                    "vocab.txt",
+                    231_508,
+                ),
+            ),
+        ),
+
+        // --- Semantic segmentation (ONNX) -------------------------------------
+        // Semantic segmentation (SegFormer B0 ADE20K) — mirrors iOS ModelCatalogBootstrap.
+        // Provider expects model.onnx + config.json + preprocessor_config.json at the
+        // model root (engines/onnx/onnx_segmentation_provider.cpp).
+        MultiFileModel(
+            "segformer-b0-ade20k",
+            "SegFormer B0 ADE20K (ONNX)",
+            ONNX,
+            ModelCategory.MODEL_CATEGORY_SEMANTIC_SEGMENTATION,
+            memoryBytes = 15_342_776,
+            downloadBytes = 15_342_776,
+            files = listOf(
+                ModelFile(
+                    "https://huggingface.co/Xenova/segformer-b0-finetuned-ade-512-512/resolve/" +
+                        "d3e5499fa8701ff0453ca940a8dfeae39b2f1504/onnx/model.onnx",
+                    "model.onnx",
+                    15_335_446,
+                ),
+                ModelFile(
+                    "https://huggingface.co/Xenova/segformer-b0-finetuned-ade-512-512/resolve/" +
+                        "d3e5499fa8701ff0453ca940a8dfeae39b2f1504/config.json",
+                    "config.json",
+                    6_957,
+                ),
+                ModelFile(
+                    "https://huggingface.co/Xenova/segformer-b0-finetuned-ade-512-512/resolve/" +
+                        "d3e5499fa8701ff0453ca940a8dfeae39b2f1504/preprocessor_config.json",
+                    "preprocessor_config.json",
+                    373,
+                ),
+            ),
+        ),
+    )
+}

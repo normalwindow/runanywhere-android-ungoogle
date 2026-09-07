@@ -144,7 +144,7 @@
 -keep,allowobfuscation class androidx.navigation.compose.NavGraphBuilderKt { *; }
 -keep,allowobfuscation class androidx.navigation.compose.NavHostControllerKt { *; }
 -keep,allowobfuscation class androidx.navigation.compose.NavHostKt { *; }
--keep,allowobfuscation class com.runanywhere.runanywhereai.ui.navigation.DestinationsKt { *; }
+-keep,allowobfuscation class xyz.normalwindow.runanywhere.ui.navigation.DestinationsKt { *; }
 -keep,allowobfuscation class kotlin.KotlinNothingValueException { *; }
 -keep,allowobfuscation class kotlin.NoWhenBranchMatchedException { *; }
 -keep,allowobfuscation class kotlin.coroutines.Continuation { *; }
@@ -214,7 +214,7 @@
     androidx.core.os.LocaleListCompat forLanguageTags(java.lang.String);
     java.util.Locale get(int);
 }
--keep,allowobfuscation class com.runanywhere.runanywhereai.ui.navigation.Vision {
+-keep,allowobfuscation class xyz.normalwindow.runanywhere.ui.navigation.Vision {
     <init>(boolean, int, kotlin.jvm.internal.DefaultConstructorMarker);
 }
 -keep interface androidx.compose.ui.unit.Density {
@@ -589,7 +589,7 @@
 -keep,allowobfuscation class androidx.core.os.LocaleListCompat {
     int size();
 }
--keep,allowobfuscation class com.runanywhere.runanywhereai.ui.navigation.Vision {
+-keep,allowobfuscation class xyz.normalwindow.runanywhere.ui.navigation.Vision {
     boolean getOpenLiveCamera();
 }
 -keep,allowobfuscation class kotlin.collections.AbstractIterator {
@@ -701,22 +701,22 @@
 # generated Kotlin bytecode calls this small, statically-audited API closure
 # directly; keep the facade families intact so target R8 cannot merge/remove an
 # owner that releaseAndroidTest must resolve at runtime.
--keep class com.runanywhere.runanywhereai.data.ModelCatalog { *; }
--keep class com.runanywhere.runanywhereai.data.SingleFileModel { *; }
--keep class com.runanywhere.runanywhereai.state.GlobalState { *; }
--keep class com.runanywhere.runanywhereai.tools.WebSearchTool { *; }
--keep class com.runanywhere.runanywhereai.util.RACLog { *; }
+-keep class xyz.normalwindow.runanywhere.data.ModelCatalog { *; }
+-keep class xyz.normalwindow.runanywhere.data.SingleFileModel { *; }
+-keep class xyz.normalwindow.runanywhere.state.GlobalState { *; }
+-keep class xyz.normalwindow.runanywhere.tools.WebSearchTool { *; }
+-keep class xyz.normalwindow.runanywhere.util.RACLog { *; }
 
 # Security acceptance tests run against the exact minified release APK. Keep
 # only the app-private stores, top-level factory facade, and repositories those
 # tests call directly; the separate test APK cannot invoke members R8 removes
 # from the target even when it consumes the target mapping file.
--keep class com.runanywhere.runanywhereai.data.security.NoBackupCiphertextStore { *; }
--keep class com.runanywhere.runanywhereai.data.security.SecureStringPreferences { *; }
--keep class com.runanywhere.runanywhereai.data.security.SecurePreferencesKt { *; }
--keep class com.runanywhere.runanywhereai.data.cloud.CloudProviderRepository { *; }
--keep class com.runanywhere.runanywhereai.data.settings.SettingsRepository { *; }
--keepclassmembers class com.runanywhere.runanywhereai.data.settings.AppSettings {
+-keep class xyz.normalwindow.runanywhere.data.security.NoBackupCiphertextStore { *; }
+-keep class xyz.normalwindow.runanywhere.data.security.SecureStringPreferences { *; }
+-keep class xyz.normalwindow.runanywhere.data.security.SecurePreferencesKt { *; }
+-keep class xyz.normalwindow.runanywhere.data.cloud.CloudProviderRepository { *; }
+-keep class xyz.normalwindow.runanywhere.data.settings.SettingsRepository { *; }
+-keepclassmembers class xyz.normalwindow.runanywhere.data.settings.AppSettings {
     java.lang.String getHfToken();
 }
 

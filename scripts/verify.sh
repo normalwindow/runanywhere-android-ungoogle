@@ -14,12 +14,24 @@ log() {
 
 cd "${APP_ROOT}"
 
-if [ -z "${ANDROID_HOME:-}" ] && [ ! -f local.properties ]; then
-    echo "error: set ANDROID_HOME or create local.properties with sdk.dir=/path/to/Android/sdk" >&2
-    exit 1
+if [ -f "./gradlew.bat" ] && command -v cmd.exe >/dev/null 2>&1; then
+    run_gradle() {
+        cmd.exe /c gradlew.bat "$@"
+    }
+else
+    run_gradle() {
+        ./gradlew "$@"
+    }
+fi
+
+if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ] && [ ! -f local.properties ]; then
+    echo "warning: Android SDK variables are unset; Gradle will resolve or report the SDK requirement" >&2
 fi
 
 log "Building Android debug APK"
-./gradlew --dependency-verification strict :app:assembleDebug
+run_gradle --dependency-verification strict :app:assembleDebug
+
+log "Checking release APK for Google mobile-service dependencies"
+run_gradle --dependency-verification strict :app:verifyNoGoogleRuntime
 
 log "Android verification complete"

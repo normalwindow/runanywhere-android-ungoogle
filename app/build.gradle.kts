@@ -3,6 +3,7 @@ import java.security.MessageDigest
 import java.time.Instant
 import java.util.Properties
 import java.util.UUID
+import java.util.zip.ZipFile
 import org.gradle.api.artifacts.dsl.LockMode
 
 plugins {
@@ -76,7 +77,7 @@ require(hasReleaseSigning || releaseSigningValues.all { it.isNullOrBlank() }) {
 }
 
 android {
-    namespace = "com.runanywhere.runanywhereai"
+    namespace = "xyz.normalwindow.runanywhere"
     // Debug remains the normal developer target. Device acceptance can compile
     // instrumentation against the exact minified/signed release variant with
     // `-Prunanywhere.testBuildType=release`.
@@ -99,11 +100,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.runanywhere.runanywhereai"
+        applicationId = "xyz.normalwindow.runanywhere"
         minSdk = 24
         targetSdk = 37
-        versionCode = 33
-        versionName = "0.1.19"
+        versionCode = 34
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -338,6 +339,52 @@ $componentJson
             parentFile.mkdirs()
             writeText(json)
         }
+    }
+}
+
+val verifyNoGoogleRuntime = tasks.register("verifyNoGoogleRuntime") {
+    group = "verification"
+    description = "Fails if the release runtime or APK contains Google mobile-service components."
+    dependsOn("assembleRelease")
+    doLast {
+        val forbidden = Regex("(?i)(com[.]google[.]android[.]gms|com[.]google[.]firebase|play[.]core|play[.]integrity|firebase)")
+        val runtime = configurations.getByName("releaseRuntimeClasspath")
+        val forbiddenArtifacts = runtime.resolvedConfiguration.resolvedArtifacts.filter { candidate ->
+            val coordinate = candidate.moduleVersion.id.group + ":" + candidate.name
+            forbidden.containsMatchIn(coordinate)
+        }
+        check(forbiddenArtifacts.isEmpty()) {
+            "Google mobile-service runtime artifacts found: " + forbiddenArtifacts.joinToString { candidate ->
+                candidate.moduleVersion.id.group + ":" + candidate.name + ":" + candidate.moduleVersion.id.version
+            }
+        }
+
+        val mergedManifests = layout.buildDirectory.dir("intermediates/merged_manifests/release")
+            .get().asFile
+            .walkTopDown()
+            .filter { it.isFile && it.name == "AndroidManifest.xml" }
+            .toList()
+        val forbiddenManifestEntries = mergedManifests.flatMap { manifestFile ->
+            forbidden.findAll(manifestFile.readText()).map { matchResult ->
+                manifestFile.name + ": " + matchResult.value
+            }.toList()
+        }
+        check(forbiddenManifestEntries.isEmpty()) {
+            "Google mobile-service entries found in merged manifest: " + forbiddenManifestEntries.joinToString()
+        }
+
+        val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+        check(apk.isFile) { "Release APK was not produced at " + apk.path }
+        val forbiddenApkEntries = ZipFile(apk).use { zip ->
+            zip.entries().asSequence()
+                .map { it.name }
+                .filter { forbidden.containsMatchIn(it.replace('/', '.')) }
+                .toList()
+        }
+        check(forbiddenApkEntries.isEmpty()) {
+            "Google mobile-service entries found in release APK: " + forbiddenApkEntries.joinToString()
+        }
+        logger.lifecycle("No Google mobile-service runtime dependencies or APK entries found")
     }
 }
 

@@ -1,0 +1,4 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/icon_launcher_round_background" />
+    <item android:drawable="@drawable/ic_launcher_round_foreground" />
+</layer-list>

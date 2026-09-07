@@ -13,6 +13,11 @@ is about building, pinning, and testing the app, not about using it.
 | Disk space | Several GB, for downloaded models |
 | Device | arm64 physical device recommended; the debug variant also builds x86_64 for emulators |
 
+The app is designed to run without Google Mobile Services, a Google account, or the Play
+Store. A release APK can be installed through adb or another sideloading channel. The
+current repository does not include a no-GMS device, so release validation on a physical
+ARM64 device remains required before shipping.
+
 Two JDKs, because they serve different things. The app compiles against Java 17
 (`compileOptions` in `app/build.gradle.kts`), while `gradle/gradle-daemon-jvm.properties`
 pins `toolchainVersion=21` for the Gradle daemon itself. If no local JDK 21 is present,
@@ -26,8 +31,8 @@ inside its published AARs.
 Clone the repo:
 
 ```bash
-git clone https://github.com/RunanywhereAI/runanywhere-android.git
-cd runanywhere-android
+git clone https://github.com/normalwindow/runanywhere-android-ungoogle.git
+cd runanywhere-android-ungoogle
 ```
 
 Point Gradle at your Android SDK: export `ANDROID_HOME`, or copy
@@ -169,10 +174,48 @@ If a dependency or SDK bump makes either gate fail, regenerate the files (see
 clone keeps failing.
 
 
+## No-GMS verification
+
+The `:app:verifyNoGoogleRuntime` Gradle task builds the release APK and rejects Google
+Mobile Services, Firebase, Play Core, and Play Integrity artifacts, merged-manifest entries,
+or APK entries. It intentionally does not reject `google()` in `settings.gradle.kts`:
+Google's Maven repository is a build-time source for Android tooling and AndroidX, not a
+device runtime dependency.
+
+Run the static gate with:
+
+```bash
+./gradlew --dependency-verification strict :app:verifyNoGoogleRuntime
+```
+
+On a no-GMS ARM64 device, install and launch the APK, then verify the local model picker,
+foreground download notification, model load, and one local inference. A basic package
+check is:
+
+```bash
+adb shell pm list packages | grep -E 'com.google.android.gms|com.google.android.gsf|com.google.android.googlequicksearchbox'
+adb install -r app/build/outputs/apk/release/app-release.apk
+adb shell am start -n xyz.normalwindow.runanywhere/.MainActivity
+```
+
+The package check should return no Google package. QHexRT and vendor-specific NPU behavior
+still require physical-device validation.
+
+## App settings
+
+Settings provides a model download source selector with Hugging Face, `hf-mirror.com`, and a
+custom HTTPS base URL. The custom source is applied to newly registered catalog and Hugging
+Face model URLs when the user taps the apply button. Downloads keep their partial files when
+interrupted and the foreground service throttles progress notifications and UI state updates
+to avoid binder and Compose update storms.
+
+The default accent is the icon's teal color. Users can switch between teal and orange, and can
+choose system, light, or dark appearance independently from the device theme.
+
 ## Project layout
 
 ```
-app/src/main/java/com/runanywhere/runanywhereai/
+app/src/main/java/xyz/normalwindow/runanywhere/
   RunAnywhereApplication.kt   SDK init, backend registration, catalog seeding
   MainActivity.kt             Compose host
   ui/navigation/              Type-safe routes and the drawer destinations
@@ -213,7 +256,7 @@ For a quick static check without a full compile:
 |----------|------|
 | Kotlin SDK | [runanywhere-sdks/bindings/kotlin](https://github.com/RunanywhereAI/runanywhere-sdks/tree/main/bindings/kotlin) |
 | Maven Central | [io.github.sanchitmonga22](https://central.sonatype.com/namespace/io.github.sanchitmonga22) |
-| Play Store | [com.runanywhere.runanywhereai](https://play.google.com/store/apps/details?id=com.runanywhere.runanywhereai) |
+| Release APK | Project release page or another sideloading channel |
 | Discord | [discord.gg/N359FBbDVd](https://discord.gg/N359FBbDVd) |
 | Issues | [GitHub Issues](https://github.com/RunanywhereAI/runanywhere-sdks/issues) |
 | Email | founders@runanywhere.ai |

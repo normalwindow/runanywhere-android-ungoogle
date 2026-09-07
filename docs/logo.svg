@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <defs>
+    <linearGradient id="tealGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2BB5A0"/>
+      <stop offset="1" stop-color="#00695C"/>
+    </linearGradient>
+  </defs>
+  <path d="M 123 46 L 85 47 L 74 51 L 67 56 L 50 46 L 50 128 L 66 114 L 66 83.5 A 20.5 20.5 0 0 1 86.5 63 L 118 63 L 122 54 Z" fill="url(#tealGrad)"/>
+  <path d="M 141 63 L 125 77 L 125 107.5 A 20.5 20.5 0 0 1 104.5 128 L 73 128 L 69 137 L 68 145 L 106 144 L 125 136 L 141 146 Z" fill="url(#tealGrad)"/>
+</svg>
